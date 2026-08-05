@@ -22,10 +22,6 @@ writing the module, not wiring plumbing.
 Every module is multi-tenant (scoped to a school), permission-guarded, audited,
 and documented in Swagger.
 
-> Looking for something smaller to read? [`projects/`](projects/) holds three
-> self-contained sample projects — roughly ten minutes each, rather than a full
-> system.
-
 ## Stack
 
 | Layer     | Choice                                                          |
@@ -45,7 +41,6 @@ and documented in Swagger.
 School-ERP/
 ├── docker-compose.yml          # postgres + backend + frontend (+ pgadmin profile)
 ├── .env.example                # compose-level variables
-├── projects/                   # small standalone samples, independent of the ERP
 │
 ├── backend/
 │   ├── prisma/
