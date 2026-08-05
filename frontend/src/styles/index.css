@@ -1,0 +1,10 @@
+/* Preflight is disabled in tailwind.config.js — MUI's CssBaseline owns resets,
+   so only the utility layers are pulled in here. */
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}

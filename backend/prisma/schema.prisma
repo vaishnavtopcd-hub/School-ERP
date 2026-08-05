@@ -1,0 +1,648 @@
+// ---------------------------------------------------------------------------
+// School ERP — Prisma schema
+//
+// Only the identity / access-control core lives here. Feature modules
+// (students, staff, academics, attendance, fees, ...) add their own models
+// later; keep this file the single source of truth and split it with
+// `prismaSchemaFolder` if it outgrows one file.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Identifies the two roles the platform itself depends on.
+///
+/// Every other role is authored by a school administrator at runtime and has no
+/// `systemKey`, so the code never needs to know its name. Guards and invariants
+/// key off this column rather than off `Role.name`, which is free text and
+/// renameable.
+enum SystemRoleKey {
+  /// Platform operator. Global — belongs to no school, bypasses every check,
+  /// and is the only role that may create schools or appoint their admins.
+  SUPER_ADMIN
+  /// Top role *within one school*. Bypasses permission checks for its own
+  /// school's data and manages that school's roles. One per school.
+  SCHOOL_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+/// Lifecycle of an academic year. ARCHIVED is terminal.
+enum AcademicYearStatus {
+  UPCOMING
+  ACTIVE
+  ARCHIVED
+}
+
+/// Colour mode a user has pinned for themselves. NULL — the column's default —
+/// means "follow the operating system", which is what the UI does before anyone
+/// expresses a preference.
+enum ThemePreference {
+  LIGHT
+  DARK
+}
+
+/// Where a student sits in their time at the school. ACTIVE is the only state
+/// that counts towards a section's occupancy.
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+  GRADUATED
+  TRANSFERRED
+}
+
+/// How a guardian is related to a student. Deliberately small — anything more
+/// specific ("grandmother", "uncle") is a GUARDIAN as far as the school is
+/// concerned, and the distinction that matters is who may be contacted.
+enum GuardianRelationship {
+  FATHER
+  MOTHER
+  GUARDIAN
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access control
+// ---------------------------------------------------------------------------
+
+/// A tenant. Every domain record should carry a schoolId so the ERP can host
+/// multiple institutions without a schema rewrite later.
+model School {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  code      String   @unique
+  email     String?
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  roles           Role[]
+  mediums         Medium[]
+  academicYears   AcademicYear[]
+  classes         SchoolClass[]
+  subjects        Subject[]
+  teacherProfiles TeacherProfile[]
+  parentProfiles  ParentProfile[]
+  students        Student[]
+
+  @@map("schools")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  firstName    String     @map("first_name")
+  lastName     String     @map("last_name")
+  phone        String?
+  status       UserStatus @default(PENDING)
+  lastLoginAt  DateTime?  @map("last_login_at")
+
+  /// Avatar held inline as a `data:` URL rather than as a reference to a file.
+  ///
+  /// The platform has no object store and no upload directory, and adding one
+  /// would mean a mounted volume (lost on redeploy if forgotten) or S3
+  /// credentials. The client crops to 256px and re-encodes before sending, so a
+  /// row costs tens of KB — cheap enough that avoiding that infrastructure is
+  /// the better trade at school scale. Swap to a URL column if that changes.
+  avatarUrl String? @map("avatar_url") @db.Text
+
+  /// Postal address, split so it can be searched and formatted per locale
+  /// later. All optional — plenty of staff will never fill it in.
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String?
+  state        String?
+  postalCode   String? @map("postal_code")
+  country      String?
+
+  /// NULL means the OS preference decides. See `ThemePreference`.
+  themePreference ThemePreference? @map("theme_preference")
+
+  /// Access tokens issued before this instant are rejected, so changing or
+  /// resetting a password kills live sessions without waiting for expiry.
+  passwordChangedAt DateTime? @map("password_changed_at")
+
+  /// Brute-force throttling. Reset to 0 on any successful login.
+  failedLoginAttempts Int       @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime? @map("locked_until")
+
+  schoolId String? @map("school_id") @db.Uuid
+  school   School? @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+
+  roles               UserRole[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  classTeacherOf      Section[]            @relation("ClassTeacherSections")
+  taughtSubjects      Subject[]            @relation("SubjectTeacher")
+  teacherProfile      TeacherProfile?
+  parentProfile       ParentProfile?
+  guardianOf          ParentStudent[]      @relation("GuardianOf")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([schoolId])
+  @@index([status])
+  // Every list query filters out soft-deleted rows and sorts by createdAt.
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@map("users")
+}
+
+/// A role belongs to exactly one school, except the global SUPER_ADMIN.
+///
+/// `name` is free text so an administrator can author roles that match how
+/// their school actually works ("Vice Principal", "Bursar", "Lab Assistant").
+/// Code must never branch on it — use `systemKey` for that.
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+
+  /// NULL for the global SUPER_ADMIN role; set for every school-owned role.
+  schoolId String? @map("school_id") @db.Uuid
+  school   School? @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  /// Set only on the roles the platform depends on. NULL for admin-authored
+  /// roles, which is what makes them safe to rename and delete.
+  systemKey SystemRoleKey? @map("system_key")
+
+  /// System roles cannot be renamed, re-permissioned, or deleted via the API.
+  isSystem Boolean @default(false) @map("is_system")
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Names are unique per school. Postgres treats NULLs as distinct, so this
+  /// does not constrain the single global role.
+  @@unique([schoolId, name])
+  /// At most one SCHOOL_ADMIN role per school, and one global SUPER_ADMIN.
+  @@unique([schoolId, systemKey])
+  @@index([schoolId])
+  @@map("roles")
+}
+
+/// Permissions are `resource:action` pairs (e.g. `student:create`). Modules
+/// register their own permissions on seed — no schema change required.
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  /// Canonical form: "<resource>:<action>".
+  key         String  @unique
+  resource    String
+  action      String
+  description String?
+
+  roles RolePermission[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// Hashed refresh tokens — enables server-side revocation and per-device sessions.
+///
+/// Tokens rotate on every use: the presented token is revoked and a new one
+/// issued. Presenting an already-revoked token means it leaked, so the whole
+/// family is revoked (see AuthService.refresh).
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  /// SHA-256 of the token. The raw value is never stored, so a database leak
+  /// does not hand over usable sessions.
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id") @db.Uuid
+  /// Rotation lineage. All tokens descending from one login share a family id,
+  /// which is what gets revoked wholesale on reuse detection.
+  familyId  String    @map("family_id") @db.Uuid
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// Single-use, short-lived password reset tokens. Stored hashed for the same
+/// reason as refresh tokens.
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  ipAddress String?   @map("ip_address")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Academic calendar
+// ---------------------------------------------------------------------------
+
+/// A school session, e.g. "2025-2026". Exactly one may be ACTIVE per school.
+model AcademicYear {
+  id        String             @id @default(uuid()) @db.Uuid
+  name      String
+  startDate DateTime           @map("start_date") @db.Date
+  endDate   DateTime           @map("end_date") @db.Date
+  status    AcademicYearStatus @default(UPCOMING)
+
+  /// Set to `true` while status is ACTIVE and NULL otherwise.
+  ///
+  /// This exists purely to carry the unique index below. Postgres treats NULLs
+  /// as distinct in a unique index, so any number of non-active years coexist
+  /// while a second ACTIVE row for the same school is rejected by the database.
+  /// Without it, two concurrent activations could both pass a service-level
+  /// check and commit. Keep it in lockstep with `status` — nothing else writes it.
+  activeMarker Boolean? @map("active_marker")
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  archivedAt DateTime? @map("archived_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  classes SchoolClass[]
+
+  @@unique([schoolId, name])
+  /// At most one ACTIVE year per school — see `activeMarker`.
+  @@unique([schoolId, activeMarker])
+  @@index([schoolId, status])
+  @@index([startDate])
+  @@map("academic_years")
+}
+
+/// A grade within one academic year, e.g. "Class 10" of 2025-2026.
+///
+/// Scoped to a year rather than the school: the sections, capacities, and class
+/// teachers of Class 10 differ from one session to the next.
+model SchoolClass {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String
+  /// Numeric grade used for ordering — 10 sorts after 9, unlike the name.
+  level    Int
+  isActive Boolean @default(true) @map("is_active")
+
+  academicYearId String       @map("academic_year_id") @db.Uuid
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  sections Section[]
+  subjects Subject[]
+  students Student[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([academicYearId, name])
+  @@index([schoolId, isActive])
+  @@index([academicYearId, level])
+  @@map("school_classes")
+}
+
+/// A language of instruction, owned by one school.
+///
+/// A table rather than an enum or free text: schools add their own, and a
+/// section pointing at a row means renaming "Malayalam" fixes every section at
+/// once instead of leaving stale strings behind.
+/// A pupil at the school.
+///
+/// Deliberately minimal: enough to identify a student, place them in a class,
+/// and attach guardians. It exists because parent records are meaningless
+/// without someone to be a parent *of* — a fuller Students module (attendance,
+/// fees, documents, promotion) extends this rather than replacing it, the same
+/// way TeacherProfile extends User.
+///
+/// Not a `User`: a pupil has no account, no sign-in, and no role. That is the
+/// difference from staff and guardians, who all do.
+model Student {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// School-issued identifier. Unique per school; how staff actually refer to
+  /// a student in conversation and on paper.
+  admissionNo String @map("admission_no")
+
+  firstName String @map("first_name")
+  lastName  String @map("last_name")
+
+  dateOfBirth DateTime?     @map("date_of_birth") @db.Date
+  status      StudentStatus @default(ACTIVE)
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  /// Optional: a student can be enrolled before being placed. SetNull so
+  /// retiring a class does not delete the students who were in it.
+  classId String?      @map("class_id") @db.Uuid
+  class   SchoolClass? @relation(fields: [classId], references: [id], onDelete: SetNull)
+
+  sectionId String?  @map("section_id") @db.Uuid
+  section   Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  guardians ParentStudent[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([schoolId, admissionNo])
+  @@index([schoolId])
+  @@index([classId])
+  @@index([sectionId])
+  @@map("students")
+}
+
+/// Guardian record for a parent.
+///
+/// Like TeacherProfile, an *extension* of `User` rather than an entity of its
+/// own: a parent has contact details, an address, and an email — all of which
+/// `User` already carries — and may eventually sign in to see their child's
+/// progress. This holds only what is true of someone *because they are a
+/// guardian here*.
+model ParentProfile {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  occupation String?
+
+  /// Who to call when the guardian themselves cannot be reached. Stored as
+  /// plain fields rather than a second User: this person has no account, and
+  /// modelling them as one would mean an unusable half-record.
+  emergencyContactName     String? @map("emergency_contact_name")
+  emergencyContactPhone    String? @map("emergency_contact_phone")
+  emergencyContactRelation String? @map("emergency_contact_relation")
+
+  notes String?
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([schoolId])
+  @@map("parent_profiles")
+}
+
+/// Which guardians belong to which students, and how.
+///
+/// Many-to-many on purpose: a student normally has two guardians, and siblings
+/// share them. The relationship lives on the link rather than on either side,
+/// because the same person is a FATHER to one student and nothing to another.
+model ParentStudent {
+  id String @id @default(uuid()) @db.Uuid
+
+  parentId String @map("parent_id") @db.Uuid
+  parent   User   @relation("GuardianOf", fields: [parentId], references: [id], onDelete: Cascade)
+
+  studentId String  @map("student_id") @db.Uuid
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  relationship GuardianRelationship
+
+  /// The guardian the school calls first. Enforced as at most one per student
+  /// in the service, not the schema — Postgres cannot express "at most one true
+  /// per group" without a partial index, and the rule belongs with the message
+  /// explaining it.
+  isPrimaryContact Boolean @default(false) @map("is_primary_contact")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([parentId, studentId])
+  @@index([studentId])
+  @@map("parent_students")
+}
+
+/// Employment record for a member of teaching staff.
+///
+/// Deliberately an *extension* of `User` rather than an entity of its own. A
+/// teacher already exists in this system: they sign in, they hold roles, they
+/// are the target of `Subject.teacherId` and `Section.classTeacherId`, and they
+/// carry their own contact details and avatar. A parallel Teacher table would
+/// fork that identity and leave two contact records to keep in step.
+///
+/// So this holds only what is true of someone *because they teach here*, and
+/// its presence is what marks a user as a teacher.
+model TeacherProfile {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// One profile per user; deleting the account removes the employment record.
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// HR/payroll identifier. Optional — plenty of schools do not issue one.
+  employeeCode String? @map("employee_code")
+
+  /// Free text on purpose: "M.Sc Mathematics, B.Ed" does not decompose into
+  /// columns in any way a school would agree on.
+  qualification String?
+
+  /// Main teaching area, e.g. "Mathematics". Distinct from the subjects they
+  /// are currently allocated, which change every year.
+  specialisation String?
+
+  /// Whole years of teaching experience, including before joining this school.
+  experienceYears Int @default(0) @map("experience_years")
+
+  /// Date they joined *this* school.
+  joinedOn DateTime? @map("joined_on") @db.Date
+
+  /// Short biography or internal notes.
+  bio String?
+
+  /// Denormalised from the user so list queries scope by tenant without a join.
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Postgres treats NULLs as distinct, so any number of profiles may go
+  /// without an employee code while issued ones stay unique per school.
+  @@unique([schoolId, employeeCode])
+  @@index([schoolId])
+  @@map("teacher_profiles")
+}
+
+/// A subject taught to one class.
+///
+/// Scoped to a class rather than shared across the school: "Mathematics" for
+/// Class 9 and for Class 10 are separate rows, because each carries its own
+/// teacher and credit weighting. That is also why `code` and `name` are unique
+/// per class rather than per school — a school would otherwise need MATH-9 and
+/// MATH-10 to avoid a collision that says nothing about the real world.
+model Subject {
+  id   String @id @default(uuid()) @db.Uuid
+  /// Short institutional identifier, e.g. "MATH101". Stored upper-cased.
+  code String
+  name String
+
+  /// Credit weighting. 0 is allowed — plenty of schools do not weight subjects.
+  credits Int @default(0)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  /// Denormalised from the class so list queries can scope by tenant without a
+  /// join, matching how every other module filters.
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  classId String      @map("class_id") @db.Uuid
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  /// Optional — a subject can exist on the timetable before staffing is decided.
+  /// SetNull so removing a user does not delete the subjects they taught.
+  teacherId String? @map("teacher_id") @db.Uuid
+  teacher   User?   @relation("SubjectTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([classId, code])
+  @@unique([classId, name])
+  @@index([schoolId])
+  @@index([classId])
+  @@index([teacherId])
+  @@map("subjects")
+}
+
+model Medium {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  sections Section[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("mediums")
+}
+
+/// A division of a class, e.g. "A". Owns its own capacity and class teacher.
+model Section {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String
+  /// Maximum enrolment for this section.
+  capacity Int
+  isActive Boolean @default(true) @map("is_active")
+
+  /// Stream qualifier, e.g. "Science" or "Commerce".
+  ///
+  /// Empty string rather than NULL when unset, deliberately: it takes part in
+  /// the uniqueness constraint below, and Postgres treats NULLs as distinct —
+  /// nullable would let section "A" be created twice with no division.
+  division String @default("")
+
+  /// Language this section is taught in. SetNull so retiring a medium does not
+  /// delete the sections that used it.
+  mediumId String? @map("medium_id") @db.Uuid
+  medium   Medium? @relation(fields: [mediumId], references: [id], onDelete: SetNull)
+
+  classId String      @map("class_id") @db.Uuid
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  /// The teacher responsible for this section. Optional — a section can exist
+  /// before staffing is decided. SetNull so removing a user does not delete it.
+  classTeacherId String? @map("class_teacher_id") @db.Uuid
+  classTeacher   User?   @relation("ClassTeacherSections", fields: [classTeacherId], references: [id], onDelete: SetNull)
+
+  students Student[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Name alone is not unique any more — "A" may exist once per division, so
+  /// Science and Commerce streams can coexist within one class.
+  @@unique([classId, name, division])
+  @@index([classTeacherId])
+  @@index([mediumId])
+  @@map("sections")
+}
+
+/// Append-only audit trail. Write to it from an interceptor once modules exist.
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  metadata   Json?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([actorId])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

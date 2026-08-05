@@ -1,0 +1,98 @@
+name: school-erp
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: school-erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-school_erp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-school_erp}
+      POSTGRES_DB: ${POSTGRES_DB:-school_erp}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-school_erp} -d ${POSTGRES_DB:-school_erp}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - school-erp-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: school-erp-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-school_erp}:${POSTGRES_PASSWORD:-school_erp}@postgres:5432/${POSTGRES_DB:-school_erp}?schema=public
+    env_file:
+      - ./backend/.env
+    ports:
+      - '${BACKEND_PORT:-4000}:4000'
+    volumes:
+      # Bind-mount source for hot reload in development; the anonymous volume
+      # keeps the container's own node_modules from being shadowed.
+      - ./backend:/usr/src/app
+      - /usr/src/app/node_modules
+    networks:
+      - school-erp-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: ${BUILD_TARGET:-development}
+    container_name: school-erp-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:4000/api/v1}
+    ports:
+      - '${FRONTEND_PORT:-3000}:3000'
+    volumes:
+      - ./frontend:/usr/src/app
+      - /usr/src/app/node_modules
+    networks:
+      - school-erp-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: school-erp-pgadmin
+    restart: unless-stopped
+    profiles: ['tools']
+    depends_on:
+      - postgres
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@school-erp.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - '${PGADMIN_PORT:-5050}:80'
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - school-erp-net
+
+volumes:
+  postgres-data:
+    name: school-erp-postgres-data
+  pgadmin-data:
+    name: school-erp-pgadmin-data
+
+networks:
+  school-erp-net:
+    name: school-erp-net
+    driver: bridge
