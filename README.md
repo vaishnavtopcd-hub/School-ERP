@@ -1,8 +1,30 @@
 # School ERP
 
-Production-ready scaffolding for a school management platform. **Setup only — no
-business features are implemented yet.** Everything here exists so that adding a
-feature module is a matter of writing the module, not wiring infrastructure.
+A school management platform: multi-tenant, permission-driven, and built module
+by module on shared infrastructure so that adding a feature is a matter of
+writing the module, not wiring plumbing.
+
+## Implemented modules
+
+| Module             | What it covers                                                          |
+| ------------------ | ----------------------------------------------------------------------- |
+| **Auth**           | JWT access + refresh, session restore, password reset                   |
+| **Users & roles**  | Accounts, role assignment, permission-based RBAC                        |
+| **Academic years** | Terms, current-year tracking                                            |
+| **Classes**        | Class levels and their sections                                         |
+| **Sections**       | Divisions, capacity, class teacher                                      |
+| **Mediums**        | Languages of instruction                                                |
+| **Subjects**       | Curriculum, per-class allocation, subject teachers                      |
+| **Teachers**       | Staff records, qualifications, subject and section allocations          |
+| **Students**       | Enrolment, admission numbers, class placement                           |
+| **Parents**        | Guardians, contact details, emergency contacts, student relationships   |
+
+Every module is multi-tenant (scoped to a school), permission-guarded, audited,
+and documented in Swagger.
+
+> Looking for something smaller to read? [`projects/`](projects/) holds three
+> self-contained sample projects — roughly ten minutes each, rather than a full
+> system.
 
 ## Stack
 
@@ -23,10 +45,12 @@ feature module is a matter of writing the module, not wiring infrastructure.
 School-ERP/
 ├── docker-compose.yml          # postgres + backend + frontend (+ pgadmin profile)
 ├── .env.example                # compose-level variables
+├── projects/                   # small standalone samples, independent of the ERP
 │
 ├── backend/
 │   ├── prisma/
-│   │   ├── schema.prisma       # identity + RBAC core
+│   │   ├── schema.prisma       # identity, RBAC, academics, people
+│   │   ├── migrations/         # one folder per applied migration
 │   │   └── seed.ts             # idempotent: permissions, roles, super admin
 │   └── src/
 │       ├── main.ts             # bootstrap: helmet, CORS, prefix, versioning, Swagger
@@ -34,14 +58,19 @@ School-ERP/
 │       ├── config/             # env schema, typed config namespaces, Swagger setup
 │       ├── common/             # decorators, guards, filters, interceptors, DTOs
 │       ├── core/               # prisma, logger, health — infrastructure services
-│       └── modules/            # FEATURE MODULES GO HERE
-│           └── auth/           # JWT strategy (token verification only)
+│       └── modules/            # one folder per feature
+│           ├── auth/           # JWT strategy, login, refresh, password reset
+│           ├── users/          # accounts and role assignment
+│           ├── academic-years/
+│           ├── classes/  sections/  mediums/  subjects/
+│           └── teachers/  students/  parents/
 │
 └── frontend/
     └── src/
         ├── app/                # store, router, theme, providers
-        ├── features/           # FEATURE MODULES GO HERE
-        │   └── auth/           # session slice, useAuth, ProtectedRoute
+        ├── features/           # mirrors the backend modules
+        │   ├── auth/           # session slice, useAuth, ProtectedRoute
+        │   └── users/  classes/  subjects/  teachers/  students/  parents/  …
         ├── shared/             # api client, components, hooks, types, utils
         └── config/             # validated VITE_ env
 ```
