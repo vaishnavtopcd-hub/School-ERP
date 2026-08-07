@@ -1,22 +1,25 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
+import Alert from '@mui/material/Alert';
 import Divider from '@mui/material/Divider';
 import ListItemText from '@mui/material/ListItemText';
 import MenuItem from '@mui/material/MenuItem';
+import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 
 import { useRoleOptions, useUsersList } from '@/features/users/hooks/useUsers';
 import { AppDialog } from '@/shared/components';
 
-import { useCreateParent } from '../hooks/useParents';
+import { useCreateParent, useLinkStudent } from '../hooks/useParents';
 import { createParentSchema, type CreateParentInput } from '../schemas/parent.schemas';
 import { DEFAULT_PARENT_ROLE_NAME } from '../types';
+import { StudentLinksField, type StagedLink } from './StudentLinksField';
 
 interface ParentFormDialogProps {
   open: boolean;
@@ -43,6 +46,15 @@ const USER_PICKER_PARAMS = { page: 1, limit: 100 };
 
 export function ParentFormDialog({ open, onClose }: ParentFormDialogProps) {
   const createParent = useCreateParent();
+  const linkStudent = useLinkStudent();
+
+  const [links, setLinks] = useState<StagedLink[]>([]);
+  /**
+   * Set once the guardian exists. A link can fail after the guardian is saved —
+   * resubmitting must then link the rest, not create a second guardian and get
+   * a 409 for an email that is now taken.
+   */
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const { data: users, isLoading: usersLoading } = useUsersList(USER_PICKER_PARAMS, open);
   const { data: roles = [], isLoading: rolesLoading } = useRoleOptions();
@@ -70,11 +82,21 @@ export function ParentFormDialog({ open, onClose }: ParentFormDialogProps) {
       ...EMPTY,
       roleIds: parentRole ? [parentRole.id] : [],
     } as unknown as CreateParentInput);
+    setLinks([]);
+    setCreatedId(null);
     createParent.reset();
+    linkStudent.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, roles]);
 
-  const onSubmit = handleSubmit((values) => {
+  /**
+   * Save the guardian, then write the staged links.
+   *
+   * Two steps, because the join table needs a parent id — so this cannot be one
+   * request. Links are dropped from the staged list as each succeeds: if one
+   * fails, what is left on screen is exactly what still has to be written.
+   */
+  const onSubmit = handleSubmit(async (values) => {
     const profile = {
       occupation: values.occupation,
       emergencyContactName: values.emergencyContactName,
@@ -83,20 +105,46 @@ export function ParentFormDialog({ open, onClose }: ParentFormDialogProps) {
       notes: values.notes,
     };
 
-    createParent.mutate(
-      values.mode === 'existing'
-        ? { userId: values.userId, ...profile }
-        : {
-            email: values.email,
-            firstName: values.firstName,
-            lastName: values.lastName,
-            phone: values.phone || null,
-            password: values.password,
-            roleIds: values.roleIds,
-            ...profile,
-          },
-      { onSuccess: onClose },
-    );
+    let pending = links;
+
+    try {
+      const parentId =
+        createdId ??
+        (
+          await createParent.mutateAsync(
+            values.mode === 'existing'
+              ? { userId: values.userId, ...profile }
+              : {
+                  email: values.email,
+                  firstName: values.firstName,
+                  lastName: values.lastName,
+                  phone: values.phone || null,
+                  password: values.password,
+                  roleIds: values.roleIds,
+                  ...profile,
+                },
+          )
+        ).id;
+
+      setCreatedId(parentId);
+
+      for (const link of links) {
+        await linkStudent.mutateAsync({
+          id: parentId,
+          studentId: link.studentId,
+          relationship: link.relationship,
+          isPrimaryContact: link.isPrimaryContact,
+        });
+        pending = pending.filter((row) => row.studentId !== link.studentId);
+      }
+
+      onClose();
+    } catch {
+      // Surfaced by whichever mutation failed; the dialog stays open so the
+      // rest can be retried.
+    } finally {
+      setLinks(pending);
+    }
   });
 
   return (
@@ -106,13 +154,22 @@ export function ParentFormDialog({ open, onClose }: ParentFormDialogProps) {
       title="Add guardian"
       subtitle="A guardian is a user with a guardian record."
       icon={PersonAddAlt1OutlinedIcon}
-      maxWidth="sm"
-      error={createParent.error}
-      isPending={createParent.isPending}
+      // md, like the edit dialog: the students section makes this form too tall
+      // and too narrow for sm, and the picker's three controls need the width.
+      maxWidth="md"
+      error={createParent.error ?? linkStudent.error}
+      isPending={createParent.isPending || linkStudent.isPending}
       pendingLabel="Saving…"
-      confirmLabel="Add guardian"
+      confirmLabel={createdId ? 'Link remaining students' : 'Add guardian'}
       onSubmit={onSubmit}
     >
+      {createdId && (
+        <Alert severity="info">
+          The guardian is saved — the details below are no longer being sent. Retry the student
+          links, or close and add them later from the guardian&rsquo;s Students action.
+        </Alert>
+      )}
+
       <Controller
         control={control}
         name="mode"
@@ -263,6 +320,25 @@ export function ParentFormDialog({ open, onClose }: ParentFormDialogProps) {
           helperText={errors.emergencyContactRelation?.message}
         />
       </Stack>
+
+      <Divider />
+      <Typography variant="overline" color="text.secondary">
+        Students {links.length > 0 && `(${links.length})`}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5 }}>
+        Linked once the guardian is saved. Every one of these can be changed later.
+      </Typography>
+
+      {/* Boxed: this is the one section that holds a list rather than fields,
+          and without an edge it reads as loose controls under a heading. */}
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <StudentLinksField
+          value={links}
+          onChange={setLinks}
+          enabled={open}
+          disabled={createParent.isPending || linkStudent.isPending}
+        />
+      </Paper>
     </AppDialog>
   );
 }

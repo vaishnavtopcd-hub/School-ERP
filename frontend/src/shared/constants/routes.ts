@@ -40,12 +40,42 @@ export const ROUTES = {
     list: '/subjects',
   },
 
+  timetable: {
+    list: '/timetable',
+  },
+
+  exams: {
+    list: '/exams',
+    detailPattern: '/exams/:id',
+    detail: (id: string) => `/exams/${id}`,
+  },
+
+  attendance: {
+    /** The classes, and how far each register has got today. */
+    list: '/attendance',
+    sectionPattern: '/attendance/:sectionId',
+    section: (sectionId: string) => `/attendance/${sectionId}`,
+    /** A guardian's own children. Needs no id — the API derives them. */
+    myChildren: '/my-children/attendance',
+  },
+
   teachers: {
     list: '/teachers',
   },
 
+  /**
+   * Create, view, and edit are pages rather than dialogs: a record this size
+   * deserves a URL you can link to, reload, and open in a tab.
+   *
+   * `:id` forms are for the route table; the functions build a path to visit.
+   */
   students: {
     list: '/students',
+    new: '/students/new',
+    detailPattern: '/students/:id',
+    detail: (id: string) => `/students/${id}`,
+    editPattern: '/students/:id/edit',
+    edit: (id: string) => `/students/${id}/edit`,
   },
 
   parents: {

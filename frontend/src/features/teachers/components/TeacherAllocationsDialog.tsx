@@ -17,6 +17,7 @@ import { useClassesList } from '@/features/classes/hooks/useClasses';
 import { useSubjectsList } from '@/features/subjects/hooks/useSubjects';
 import { AppDialog } from '@/shared/components';
 import { ApiError } from '@/shared/api';
+import { MAX_PAGE_SIZE } from '@/shared/constants';
 
 import {
   useAllocateSection,
@@ -33,8 +34,18 @@ interface TeacherAllocationsDialogProps {
   onClose: () => void;
 }
 
-const SUBJECT_PARAMS = { page: 1, limit: 200, sortBy: 'code' as const, sortOrder: 'asc' as const };
-const CLASS_PARAMS = { page: 1, limit: 100, sortBy: 'level' as const, sortOrder: 'asc' as const };
+const SUBJECT_PARAMS = {
+  page: 1,
+  limit: MAX_PAGE_SIZE,
+  sortBy: 'code' as const,
+  sortOrder: 'asc' as const,
+};
+const CLASS_PARAMS = {
+  page: 1,
+  limit: MAX_PAGE_SIZE,
+  sortBy: 'level' as const,
+  sortOrder: 'asc' as const,
+};
 
 /** One allocation row: what it is, and a way to take it away. */
 function AllocationRow({

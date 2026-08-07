@@ -1,6 +1,10 @@
 import BadgeOutlinedIcon from '@mui/icons-material/BadgeOutlined';
 import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
+import CalendarViewWeekOutlinedIcon from '@mui/icons-material/CalendarViewWeekOutlined';
 import ContactPhoneOutlinedIcon from '@mui/icons-material/ContactPhoneOutlined';
+import AssignmentOutlinedIcon from '@mui/icons-material/AssignmentOutlined';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import FamilyRestroomOutlinedIcon from '@mui/icons-material/FamilyRestroomOutlined';
 import GridViewOutlinedIcon from '@mui/icons-material/GridViewOutlined';
 import MeetingRoomOutlinedIcon from '@mui/icons-material/MeetingRoomOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
@@ -96,6 +100,43 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: TranslateOutlinedIcon,
         permission: 'medium:read',
         preload: () => import('@/features/mediums/pages/MediumsPage'),
+      },
+      {
+        label: 'Timetable',
+        to: ROUTES.timetable.list,
+        icon: CalendarViewWeekOutlinedIcon,
+        permission: 'timetable:read',
+        preload: () => import('@/features/timetable/pages/TimetablePage'),
+      },
+      {
+        label: 'Examinations',
+        to: ROUTES.exams.list,
+        icon: AssignmentOutlinedIcon,
+        permission: 'exam:read',
+        preload: () => import('@/features/exams/pages/ExamsPage'),
+      },
+      {
+        label: 'Attendance',
+        to: ROUTES.attendance.list,
+        icon: FactCheckOutlinedIcon,
+        permission: 'attendance:read',
+        preload: () => import('@/features/attendance/pages/AttendancePage'),
+      },
+    ],
+  },
+  {
+    // Guardians hold one permission and see one thing. Kept out of Academics so
+    // a parent's sidebar is their family, not a school menu with most of it
+    // missing.
+    key: 'family',
+    heading: 'My family',
+    items: [
+      {
+        label: "Children's attendance",
+        to: ROUTES.attendance.myChildren,
+        icon: FamilyRestroomOutlinedIcon,
+        permission: 'attendance:read-own',
+        preload: () => import('@/features/attendance/pages/MyChildrenAttendancePage'),
       },
     ],
   },

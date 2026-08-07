@@ -14,3 +14,12 @@ export const STORAGE_KEYS = {
 export const QUERY_KEYS = {
   currentUser: ['auth', 'me'] as const,
 } as const;
+
+/**
+ * Largest `limit` the API accepts on a list endpoint — `PaginationQueryDto`
+ * carries `@Max(100)`, and the global pipe rejects anything above it with a 400.
+ *
+ * Use this wherever a picker wants "all of them" in one request. Asking for more
+ * does not fetch more; it fetches nothing.
+ */
+export const MAX_PAGE_SIZE = 100;

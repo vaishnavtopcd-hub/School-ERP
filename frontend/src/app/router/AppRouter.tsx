@@ -19,8 +19,21 @@ const ClassesPage = lazy(() => import('@/features/classes/pages/ClassesPage'));
 const SubjectsPage = lazy(() => import('@/features/subjects/pages/SubjectsPage'));
 const TeachersPage = lazy(() => import('@/features/teachers/pages/TeachersPage'));
 const StudentsPage = lazy(() => import('@/features/students/pages/StudentsPage'));
+const StudentCreatePage = lazy(() => import('@/features/students/pages/StudentCreatePage'));
+const StudentProfilePage = lazy(() => import('@/features/students/pages/StudentProfilePage'));
+const StudentEditPage = lazy(() => import('@/features/students/pages/StudentEditPage'));
 const ParentsPage = lazy(() => import('@/features/parents/pages/ParentsPage'));
 const MediumsPage = lazy(() => import('@/features/mediums/pages/MediumsPage'));
+const TimetablePage = lazy(() => import('@/features/timetable/pages/TimetablePage'));
+const ExamsPage = lazy(() => import('@/features/exams/pages/ExamsPage'));
+const ExamDetailPage = lazy(() => import('@/features/exams/pages/ExamDetailPage'));
+const AttendancePage = lazy(() => import('@/features/attendance/pages/AttendancePage'));
+const AttendanceSectionPage = lazy(
+  () => import('@/features/attendance/pages/AttendanceSectionPage'),
+);
+const MyChildrenAttendancePage = lazy(
+  () => import('@/features/attendance/pages/MyChildrenAttendancePage'),
+);
 const NotFoundPage = lazy(() => import('@/shared/components/feedback/NotFoundPage'));
 const ForbiddenPage = lazy(() => import('@/shared/components/feedback/ForbiddenPage'));
 
@@ -62,8 +75,19 @@ export function AppRouter() {
               <Route path={ROUTES.teachers.list} element={<TeachersPage />} />
             </Route>
 
+            {/* `new` is declared before `:id` for readability; React Router
+                prefers the static segment either way. */}
+            <Route element={<ProtectedRoute permissions={['student:create']} />}>
+              <Route path={ROUTES.students.new} element={<StudentCreatePage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute permissions={['student:update']} />}>
+              <Route path={ROUTES.students.editPattern} element={<StudentEditPage />} />
+            </Route>
+
             <Route element={<ProtectedRoute permissions={['student:read']} />}>
               <Route path={ROUTES.students.list} element={<StudentsPage />} />
+              <Route path={ROUTES.students.detailPattern} element={<StudentProfilePage />} />
             </Route>
 
             <Route element={<ProtectedRoute permissions={['parent:read']} />}>
@@ -84,6 +108,26 @@ export function AppRouter() {
 
             <Route element={<ProtectedRoute permissions={['medium:read']} />}>
               <Route path={ROUTES.mediums.list} element={<MediumsPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute permissions={['timetable:read']} />}>
+              <Route path={ROUTES.timetable.list} element={<TimetablePage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute permissions={['exam:read']} />}>
+              <Route path={ROUTES.exams.list} element={<ExamsPage />} />
+              <Route path={ROUTES.exams.detailPattern} element={<ExamDetailPage />} />
+            </Route>
+
+            <Route element={<ProtectedRoute permissions={['attendance:read']} />}>
+              <Route path={ROUTES.attendance.list} element={<AttendancePage />} />
+              <Route path={ROUTES.attendance.sectionPattern} element={<AttendanceSectionPage />} />
+            </Route>
+
+            {/* A guardian's own children. `read-own` grants no access to the
+                school's register — the service scopes it to the caller. */}
+            <Route element={<ProtectedRoute permissions={['attendance:read-own']} />}>
+              <Route path={ROUTES.attendance.myChildren} element={<MyChildrenAttendancePage />} />
             </Route>
 
             {/* Further feature routes mount here, gated the same way. */}

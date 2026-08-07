@@ -1,5 +1,7 @@
+import MedicalInformationOutlinedIcon from '@mui/icons-material/MedicalInformationOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SchoolOutlinedIcon from '@mui/icons-material/SchoolOutlined';
+import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
@@ -18,7 +20,13 @@ import { alpha } from '@mui/material/styles';
 
 import { formatDateOnly } from '@/shared/utils';
 
-import { STATUS_COLORS, STATUS_LABELS, type Student } from '../types';
+import {
+  BLOOD_GROUP_LABELS,
+  GENDER_LABELS,
+  STATUS_COLORS,
+  STATUS_LABELS,
+  type Student,
+} from '../types';
 
 const COLUMN_COUNT = 6;
 
@@ -47,6 +55,8 @@ interface StudentsTableProps {
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onOpenActions: (student: Student, anchor: HTMLElement) => void;
+  /** The row itself opens the record — the list's main job is getting you there. */
+  onOpenStudent: (student: Student) => void;
 }
 
 export function StudentsTable({
@@ -59,6 +69,7 @@ export function StudentsTable({
   onPageChange,
   onPageSizeChange,
   onOpenActions,
+  onOpenStudent,
 }: StudentsTableProps) {
   return (
     <Box>
@@ -102,17 +113,24 @@ export function StudentsTable({
               )}
 
               {rows.map((row) => (
-                <TableRow key={row.id} hover sx={{ '& > .MuiTableCell-root': { py: 1.25 } }}>
+                <TableRow
+                  key={row.id}
+                  hover
+                  onClick={() => onOpenStudent(row)}
+                  sx={{ '& > .MuiTableCell-root': { py: 1.25 }, cursor: 'pointer' }}
+                >
                   <TableCell>
                     <Stack direction="row" alignItems="center" gap={1.5}>
-                      <Box
+                      {/* The photo when there is one; the school mark when
+                          there is not, rather than an empty circle. */}
+                      <Avatar
+                        src={row.photoUrl ?? undefined}
+                        variant="rounded"
                         sx={{
                           width: 32,
                           height: 32,
                           flexShrink: 0,
                           borderRadius: 2,
-                          display: 'grid',
-                          placeItems: 'center',
                           color: row.status === 'ACTIVE' ? 'primary.main' : 'text.disabled',
                           bgcolor: (theme) =>
                             alpha(
@@ -121,15 +139,27 @@ export function StudentsTable({
                                 : theme.palette.text.disabled,
                               0.12,
                             ),
+                          opacity: row.status === 'ACTIVE' ? 1 : 0.6,
                         }}
                       >
                         <SchoolOutlinedIcon sx={{ fontSize: 17 }} />
-                      </Box>
+                      </Avatar>
 
                       <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" fontWeight={600} noWrap>
-                          {row.firstName} {row.lastName}
-                        </Typography>
+                        <Stack direction="row" alignItems="center" gap={0.5} sx={{ minWidth: 0 }}>
+                          <Typography variant="body2" fontWeight={600} noWrap>
+                            {row.firstName} {row.lastName}
+                          </Typography>
+                          {/* Flagged in the register, not just buried in the
+                              form: whoever handles an incident reads this list. */}
+                          {row.medicalNotes && (
+                            <Tooltip title={row.medicalNotes}>
+                              <MedicalInformationOutlinedIcon
+                                sx={{ fontSize: 15, color: 'warning.main', flexShrink: 0 }}
+                              />
+                            </Tooltip>
+                          )}
+                        </Stack>
                         <Typography
                           variant="caption"
                           color="text.secondary"
@@ -138,6 +168,7 @@ export function StudentsTable({
                           sx={{ letterSpacing: '0.03em' }}
                         >
                           {row.admissionNo}
+                          {row.gender ? ` · ${GENDER_LABELS[row.gender]}` : ''}
                         </Typography>
                       </Box>
                     </Stack>
@@ -159,12 +190,19 @@ export function StudentsTable({
                     )}
                   </TableCell>
 
+                  {/* Blood group rides with the date of birth: both are read off
+                      the record in the same breath, and neither earns a column. */}
                   <TableCell>
                     {row.dateOfBirth ? (
                       <Typography variant="body2">{formatDateOnly(row.dateOfBirth)}</Typography>
                     ) : (
                       <Typography variant="body2" color="text.disabled">
                         —
+                      </Typography>
+                    )}
+                    {row.bloodGroup && (
+                      <Typography variant="caption" color="text.secondary" component="div">
+                        {BLOOD_GROUP_LABELS[row.bloodGroup]}
                       </Typography>
                     )}
                   </TableCell>
@@ -229,7 +267,11 @@ export function StudentsTable({
                     <IconButton
                       size="small"
                       aria-label={`Actions for ${row.firstName} ${row.lastName}`}
-                      onClick={(event) => onOpenActions(row, event.currentTarget)}
+                      onClick={(event) => {
+                        // Otherwise the row beneath opens the record as well.
+                        event.stopPropagation();
+                        onOpenActions(row, event.currentTarget);
+                      }}
                     >
                       <MoreVertIcon fontSize="small" />
                     </IconButton>

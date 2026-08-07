@@ -82,6 +82,47 @@ export const PERMISSIONS = {
 
   /** Languages of instruction, owned per school. */
   medium: resource('medium'),
+
+  /**
+   * The shape of the school day — the period ladder every class shares.
+   * Separate from `timetable:*` because setting the day's structure is a
+   * once-a-year act, while filling the grid is ordinary work.
+   */
+  period: resource('period'),
+
+  /**
+   * Lessons on the grid. Reaches into sections, subjects, and teachers, so a
+   * role granted these should hold `class:read`, `subject:read`, and
+   * `teacher:read` too — the assignment pickers are served by those modules.
+   */
+  timetable: resource('timetable'),
+
+  /**
+   * The daily register.
+   *
+   * `read-own` is the guardian's view and is deliberately *not* an action on
+   * the resource: it grants no access to the school's register at all, only to
+   * the rows about children the holder is recorded as a guardian of. The
+   * service enforces that scope regardless of what else the caller holds, so
+   * the permission cannot be widened by granting more.
+   */
+  attendance: {
+    ...resource('attendance'),
+    readOwn: 'attendance:read-own',
+  },
+
+  /**
+   * Examinations and their schedules.
+   *
+   * Publishing and archiving are separable from ordinary edits for the same
+   * reason they are on an academic year: announcing a schedule to the whole
+   * school, and closing one for good, are decisions rather than data entry.
+   */
+  exam: {
+    ...resource('exam'),
+    publish: 'exam:publish',
+    archive: 'exam:archive',
+  },
   // Feature modules extend this object as they land, e.g.:
   // attendance: resource('attendance'),
   // fee: resource('fee'),

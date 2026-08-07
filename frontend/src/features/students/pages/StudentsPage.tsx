@@ -10,14 +10,15 @@ import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '@/features/auth';
 import { useClassesList } from '@/features/classes/hooks/useClasses';
 import { ApiError } from '@/shared/api';
 import { ConfirmActionDialog, PageHeader } from '@/shared/components';
+import { ROUTES } from '@/shared/constants';
 import { useDebounce } from '@/shared/hooks';
 
-import { StudentFormDialog } from '../components/StudentFormDialog';
 import { StudentsTable } from '../components/StudentsTable';
 import { useDeleteStudent, useStudentsList } from '../hooks/useStudents';
 import {
@@ -28,12 +29,17 @@ import {
   type StudentStatus,
 } from '../types';
 
-type DialogKind = 'create' | 'edit' | 'delete' | null;
+/**
+ * Only deleting is still a dialog: create, view, and edit are pages now, and a
+ * confirmation is an action on a record rather than a screen of its own.
+ */
+type DialogKind = 'delete' | null;
 
 const CLASS_FILTER_PARAMS = { page: 1, limit: 100, sortBy: 'level', sortOrder: 'asc' } as const;
 
 export default function StudentsPage() {
   const { hasPermission } = useAuth();
+  const navigate = useNavigate();
 
   const [searchInput, setSearchInput] = useState('');
   const search = useDebounce(searchInput, 350);
@@ -95,10 +101,7 @@ export default function StudentsPage() {
             <Button
               variant="contained"
               startIcon={<AddIcon />}
-              onClick={() => {
-                setActiveStudent(null);
-                setDialog('create');
-              }}
+              onClick={() => navigate(ROUTES.students.new)}
             >
               Enrol student
             </Button>
@@ -189,11 +192,27 @@ export default function StudentsPage() {
             setActiveStudent(student);
             setMenuAnchor(anchor);
           }}
+          onOpenStudent={(student) => navigate(ROUTES.students.detail(student.id))}
         />
       </Paper>
 
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeMenu}>
-        <MenuItem disabled={!canUpdate} onClick={() => openDialog('edit')}>
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            if (activeStudent) navigate(ROUTES.students.detail(activeStudent.id));
+          }}
+        >
+          <ListItemText>View record</ListItemText>
+        </MenuItem>
+
+        <MenuItem
+          disabled={!canUpdate}
+          onClick={() => {
+            closeMenu();
+            if (activeStudent) navigate(ROUTES.students.edit(activeStudent.id));
+          }}
+        >
           <ListItemText>Edit student</ListItemText>
         </MenuItem>
 
@@ -203,12 +222,6 @@ export default function StudentsPage() {
           <ListItemText sx={{ color: 'error.main' }}>Delete student</ListItemText>
         </MenuItem>
       </Menu>
-
-      <StudentFormDialog
-        open={dialog === 'create' || dialog === 'edit'}
-        student={dialog === 'edit' ? activeStudent : null}
-        onClose={closeDialog}
-      />
 
       <ConfirmActionDialog
         open={dialog === 'delete'}

@@ -1,11 +1,15 @@
 export { studentsApi } from './api/students.api';
-export type { StudentPayload } from './api/students.api';
-export { StudentFormDialog } from './components/StudentFormDialog';
+export type { StudentGuardianPayload, StudentPayload } from './api/students.api';
+export { StudentForm } from './components/StudentForm';
+export { StudentGuardiansField } from './components/StudentGuardiansField';
+export type { StudentGuardianLink } from './components/StudentGuardiansField';
 export { StudentsTable } from './components/StudentsTable';
 export {
   studentKeys,
   useCreateStudent,
   useDeleteStudent,
+  useNextAdmissionNo,
+  useStudent,
   useStudentsList,
   useUpdateStudent,
 } from './hooks/useStudents';

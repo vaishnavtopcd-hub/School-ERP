@@ -76,6 +76,81 @@ enum GuardianRelationship {
   GUARDIAN
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+/// The kinds of examination a school sits.
+///
+/// An enum rather than a table, unlike `Medium`: these three are the shape of
+/// the academic year rather than a school's own vocabulary, and reports will
+/// want to compare "the midterm" across schools. A school that needs its own
+/// kinds — practicals, pre-boards — is the signal to promote this to a table.
+enum ExamType {
+  MIDTERM
+  FINAL
+  UNIT_TEST
+}
+
+/// Where an exam is in its life.
+///
+/// The same three-state shape as `AcademicYearStatus`, for the same reason: a
+/// thing being drafted, a thing in force, and a thing kept for the record are
+/// genuinely different, and collapsing them into a boolean loses the middle.
+enum ExamStatus {
+  /// Being built. The schedule can still change, and nobody outside the office
+  /// sees it.
+  DRAFT
+  /// Announced. Visible to teaching staff and on a student's profile, and the
+  /// schedule is frozen — an announced date that moves silently is worse than
+  /// no date.
+  PUBLISHED
+  /// Over and kept for the record. Terminal.
+  ARCHIVED
+}
+
+/// How a student was accounted for on a given day.
+///
+/// LATE is its own state rather than a flag on PRESENT: the school counts it
+/// towards attendance but reports it separately, and collapsing the two would
+/// lose the distinction the moment it is stored.
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  /// Absent with permission — sanctioned, and not the school's concern the way
+  /// an unexplained absence is.
+  LEAVE
+  LATE
+}
+
+/// Teaching days. Sunday is included because plenty of schools hold classes on
+/// it, and a timetable that cannot express that is wrong for them.
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+/// Spelled out rather than stored as "O+" free text: the register is searched
+/// and filtered on this, and a typo in a blood group is not a typo anyone wants
+/// to find during an emergency.
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+}
+
 // ---------------------------------------------------------------------------
 // Identity & access control
 // ---------------------------------------------------------------------------
@@ -93,15 +168,19 @@ model School {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users           User[]
-  roles           Role[]
-  mediums         Medium[]
-  academicYears   AcademicYear[]
-  classes         SchoolClass[]
-  subjects        Subject[]
-  teacherProfiles TeacherProfile[]
-  parentProfiles  ParentProfile[]
-  students        Student[]
+  users             User[]
+  roles             Role[]
+  mediums           Medium[]
+  academicYears     AcademicYear[]
+  classes           SchoolClass[]
+  subjects          Subject[]
+  teacherProfiles   TeacherProfile[]
+  parentProfiles    ParentProfile[]
+  students          Student[]
+  periods           Period[]
+  timetableEntries  TimetableEntry[]
+  attendanceRecords AttendanceRecord[]
+  exams             Exam[]
 
   @@map("schools")
 }
@@ -156,6 +235,8 @@ model User {
   teacherProfile      TeacherProfile?
   parentProfile       ParentProfile?
   guardianOf          ParentStudent[]      @relation("GuardianOf")
+  timetableEntries    TimetableEntry[]     @relation("TimetableTeacher")
+  attendanceMarked    AttendanceRecord[]   @relation("AttendanceMarkedBy")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -324,6 +405,7 @@ model AcademicYear {
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
   classes SchoolClass[]
+  exams   Exam[]
 
   @@unique([schoolId, name])
   /// At most one ACTIVE year per school — see `activeMarker`.
@@ -357,6 +439,8 @@ model SchoolClass {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  exams Exam[]
+
   @@unique([academicYearId, name])
   @@index([schoolId, isActive])
   @@index([academicYearId, level])
@@ -389,7 +473,19 @@ model Student {
   lastName  String @map("last_name")
 
   dateOfBirth DateTime?     @map("date_of_birth") @db.Date
+  gender      Gender?
   status      StudentStatus @default(ACTIVE)
+
+  /// Passport photo, inline as a base64 data URL — the same storage decision as
+  /// `User.avatarUrl`, and held to the same size cap by the DTO.
+  photoUrl String? @map("photo_url")
+
+  bloodGroup BloodGroup? @map("blood_group")
+
+  /// Allergies, conditions, medication — whatever the office needs to hand a
+  /// nurse. One free-text field on purpose: structuring it would demand a
+  /// vocabulary this ERP has no clinical basis to impose.
+  medicalNotes String? @map("medical_notes")
 
   schoolId String @map("school_id") @db.Uuid
   school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -402,7 +498,8 @@ model Student {
   sectionId String?  @map("section_id") @db.Uuid
   section   Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
 
-  guardians ParentStudent[]
+  guardians         ParentStudent[]
+  attendanceRecords AttendanceRecord[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -563,6 +660,9 @@ model Subject {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  timetableEntries TimetableEntry[]
+  examPapers       ExamPaper[]
+
   @@unique([classId, code])
   @@unique([classId, name])
   @@index([schoolId])
@@ -617,7 +717,9 @@ model Section {
   classTeacherId String? @map("class_teacher_id") @db.Uuid
   classTeacher   User?   @relation("ClassTeacherSections", fields: [classTeacherId], references: [id], onDelete: SetNull)
 
-  students Student[]
+  students          Student[]
+  timetableEntries  TimetableEntry[]
+  attendanceRecords AttendanceRecord[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -628,6 +730,221 @@ model Section {
   @@index([classTeacherId])
   @@index([mediumId])
   @@map("sections")
+}
+
+/// A slot in the school day, shared by every class.
+///
+/// One ladder per school rather than per class: "Period 3" has to mean the same
+/// stretch of time everywhere, or a teacher free in 9-A's third period is not
+/// necessarily free in 10-B's, and clash detection becomes guesswork.
+model Period {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What the school calls it — "Period 1", "Assembly", "Lunch".
+  name String
+
+  /// Order through the day. Times are what a human reads; this is what sorts,
+  /// because a school may run periods that do not start on a tidy boundary.
+  sequence Int
+
+  /// Wall-clock `HH:mm`, not a timestamp: a period is a time of day that
+  /// repeats, and storing it as an instant would drag in a date it never had.
+  startTime String @map("start_time")
+  endTime   String @map("end_time")
+
+  /// Breaks sit in the ladder so the grid renders them in the right place, but
+  /// nothing may be scheduled into one.
+  isBreak Boolean @default(false) @map("is_break")
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  entries TimetableEntry[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([schoolId, sequence])
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("periods")
+}
+
+/// One lesson: this section, this subject, this teacher, this day, this period.
+///
+/// The two unique indexes below are the clash rules, and they are indexes
+/// rather than service checks on purpose — a check can be raced by two
+/// concurrent requests, an index cannot. The service checks as well, but only
+/// so the failure reads as a sentence instead of a constraint name.
+model TimetableEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  day DayOfWeek
+
+  periodId String @map("period_id") @db.Uuid
+  period   Period @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  /// The section *is* the classroom here: a group of children in a room. Two
+  /// lessons for one section at one time is the classroom clash.
+  sectionId String  @map("section_id") @db.Uuid
+  section   Section @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  /// Must belong to the section's class — enforced in the service, which is
+  /// where the relationship between the two is known.
+  subjectId String  @map("subject_id") @db.Uuid
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// Cascade rather than SetNull: a lesson with nobody teaching it is not a
+  /// lesson, and leaving one would silently hide a hole in the timetable.
+  teacherId String @map("teacher_id") @db.Uuid
+  teacher   User   @relation("TimetableTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// Classroom clash: one section, one lesson at a time.
+  @@unique([sectionId, day, periodId])
+  /// Teacher clash: one teacher cannot be in two rooms at once, anywhere in
+  /// the school.
+  @@unique([teacherId, day, periodId])
+  @@index([schoolId])
+  @@index([subjectId])
+  @@map("timetable_entries")
+}
+
+/// One student, one day, one mark.
+///
+/// Daily rather than per-period: this is the register a class teacher takes
+/// once a morning, which is what the school reports on and what a parent asks
+/// about. Per-period attendance is a different record with a different owner,
+/// and would sit alongside this rather than replace it.
+model AttendanceRecord {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Date-only. The register is a day, not an instant, and storing a timestamp
+  /// would make "was this taken on the 3rd?" depend on the reader's timezone.
+  date DateTime @db.Date
+
+  status AttendanceStatus
+
+  /// Why, when it is worth recording — "dentist", "bus late". Optional, and
+  /// usually empty.
+  remarks String?
+
+  studentId String  @map("student_id") @db.Uuid
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  /// Where the student was when this was taken.
+  ///
+  /// Denormalised on purpose: a student who moves section mid-year must not
+  /// retroactively move their attendance with them, or last term's register
+  /// stops matching what was taken. SetNull so retiring a section keeps the
+  /// history it holds.
+  sectionId String?  @map("section_id") @db.Uuid
+  section   Section? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  /// Who took the register. SetNull rather than Cascade: a teacher leaving the
+  /// school must not delete the attendance they recorded.
+  markedById String? @map("marked_by_id") @db.Uuid
+  markedBy   User?   @relation("AttendanceMarkedBy", fields: [markedById], references: [id], onDelete: SetNull)
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One mark per student per day. Re-marking corrects the existing row rather
+  /// than adding a second opinion.
+  @@unique([studentId, date])
+  @@index([schoolId, date])
+  @@index([sectionId, date])
+  @@map("attendance_records")
+}
+
+/// One examination a class sits — "Midterm 2026" for Class 9.
+///
+/// Scoped to a class rather than a section: every section of a class sits the
+/// same papers on the same days, and an exam per section would be the same
+/// schedule copied as many times as there are sections, free to drift.
+model Exam {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// What the school calls it — "Midterm 2026", "Unit Test 1".
+  name String
+
+  type   ExamType
+  status ExamStatus @default(DRAFT)
+
+  /// Announced on. Null until published; kept afterwards so "when were we told?"
+  /// has an answer.
+  publishedAt DateTime? @map("published_at")
+
+  /// Free text shown with the schedule — "Bring your own instruments".
+  instructions String?
+
+  classId String      @map("class_id") @db.Uuid
+  class   SchoolClass @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  /// Which session it belongs to. SetNull so archiving a year keeps the exams
+  /// that were sat in it.
+  academicYearId String?       @map("academic_year_id") @db.Uuid
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: SetNull)
+
+  schoolId String @map("school_id") @db.Uuid
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  papers ExamPaper[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// One exam of a given name per class. "Midterm 2026" twice for Class 9 is a
+  /// mistake every time.
+  @@unique([classId, name])
+  @@index([schoolId, status])
+  @@map("exams")
+}
+
+/// One paper on an exam's schedule: this subject, this day, these hours.
+model ExamPaper {
+  id String @id @default(uuid()) @db.Uuid
+
+  examId String @map("exam_id") @db.Uuid
+  exam   Exam   @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  /// Must belong to the exam's class — enforced in the service, which is where
+  /// that relationship is known.
+  subjectId String  @map("subject_id") @db.Uuid
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  /// Date-only, like attendance: a paper is sat on a day, not at an instant in
+  /// some reader's timezone.
+  date DateTime @db.Date
+
+  /// Wall-clock `HH:mm`, the same reasoning as `Period`.
+  startTime String @map("start_time")
+  endTime   String @map("end_time")
+
+  maxMarks  Int @map("max_marks")
+  passMarks Int @map("pass_marks")
+
+  /// Where it is sat, when that is worth saying. Free text — this ERP has no
+  /// room model, and inventing one for a string on a timetable is not the
+  /// trade to make.
+  venue String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  /// A subject is examined once per exam. Two papers for one subject is a
+  /// second exam, not a second row here.
+  @@unique([examId, subjectId])
+  @@index([examId])
+  @@map("exam_papers")
 }
 
 /// Append-only audit trail. Write to it from an interceptor once modules exist.

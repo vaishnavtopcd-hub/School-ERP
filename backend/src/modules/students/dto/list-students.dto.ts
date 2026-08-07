@@ -6,12 +6,7 @@ import { IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { PaginationQueryDto } from '@/common/dto';
 
 /** Whitelisted because `sortBy` maps to Prisma's `orderBy` directly. */
-export const STUDENT_SORT_FIELDS = [
-  'admissionNo',
-  'firstName',
-  'lastName',
-  'createdAt',
-] as const;
+export const STUDENT_SORT_FIELDS = ['admissionNo', 'firstName', 'lastName', 'createdAt'] as const;
 export type StudentSortField = (typeof STUDENT_SORT_FIELDS)[number];
 
 export class ListStudentsDto extends PaginationQueryDto {

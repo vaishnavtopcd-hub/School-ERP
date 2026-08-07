@@ -17,6 +17,39 @@ export const STATUS_COLORS: Record<StudentStatus, 'success' | 'default' | 'info'
   TRANSFERRED: 'warning',
 };
 
+export const GENDERS = ['MALE', 'FEMALE', 'OTHER'] as const;
+export type Gender = (typeof GENDERS)[number];
+
+export const GENDER_LABELS: Record<Gender, string> = {
+  MALE: 'Male',
+  FEMALE: 'Female',
+  OTHER: 'Other',
+};
+
+export const BLOOD_GROUPS = [
+  'A_POSITIVE',
+  'A_NEGATIVE',
+  'B_POSITIVE',
+  'B_NEGATIVE',
+  'AB_POSITIVE',
+  'AB_NEGATIVE',
+  'O_POSITIVE',
+  'O_NEGATIVE',
+] as const;
+export type BloodGroup = (typeof BLOOD_GROUPS)[number];
+
+/** How a blood group is written on a form, as against how it is stored. */
+export const BLOOD_GROUP_LABELS: Record<BloodGroup, string> = {
+  A_POSITIVE: 'A+',
+  A_NEGATIVE: 'A−',
+  B_POSITIVE: 'B+',
+  B_NEGATIVE: 'B−',
+  AB_POSITIVE: 'AB+',
+  AB_NEGATIVE: 'AB−',
+  O_POSITIVE: 'O+',
+  O_NEGATIVE: 'O−',
+};
+
 /** A guardian as embedded in a student row. */
 export interface StudentGuardian {
   id: string;
@@ -34,6 +67,11 @@ export interface Student {
   lastName: string;
   /** Date-only, `YYYY-MM-DD`. */
   dateOfBirth: string | null;
+  gender: Gender | null;
+  /** Data URL, as with a user's avatar. */
+  photoUrl: string | null;
+  bloodGroup: BloodGroup | null;
+  medicalNotes: string | null;
   status: StudentStatus;
   schoolId: string;
 

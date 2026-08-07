@@ -28,7 +28,13 @@ import { PERMISSIONS } from '@/common/constants';
 import { ApiPaginatedResponse, CurrentUser, RequirePermissions } from '@/common/decorators';
 import { type AuthenticatedUser, type PaginatedResult } from '@/common/types';
 
-import { CreateStudentDto, ListStudentsDto, StudentResponseDto, UpdateStudentDto } from './dto';
+import {
+  CreateStudentDto,
+  ListStudentsDto,
+  NextAdmissionNoDto,
+  StudentResponseDto,
+  UpdateStudentDto,
+} from './dto';
 import { type Actor, StudentsService } from './students.service';
 
 const actorOf = (user: AuthenticatedUser): Actor => ({
@@ -59,6 +65,21 @@ export class StudentsController {
     return this.students.findAll(query, actorOf(user));
   }
 
+  // Declared before `:id` — Nest matches in declaration order, and the id route
+  // would otherwise swallow this and reject it as a malformed UUID.
+  @Get('next-admission-no')
+  @RequirePermissions(PERMISSIONS.student.create)
+  @ApiOperation({
+    summary: 'Preview the admission number an enrolment would be given',
+    description:
+      'For showing the number on the enrolment form before it is saved. Advisory: another ' +
+      'enrolment in the meantime takes it, and this caller gets the one after.',
+  })
+  @ApiOkResponse({ type: NextAdmissionNoDto })
+  async nextAdmissionNo(@CurrentUser() user: AuthenticatedUser): Promise<NextAdmissionNoDto> {
+    return { admissionNo: await this.students.nextAdmissionNo(actorOf(user)) };
+  }
+
   @Get(':id')
   @RequirePermissions(PERMISSIONS.student.read)
   @ApiOperation({ summary: 'Fetch a single student, with their guardians' })
@@ -75,10 +96,15 @@ export class StudentsController {
   @RequirePermissions(PERMISSIONS.student.create)
   @ApiOperation({
     summary: 'Enrol a student',
-    description: 'Class and section are optional — a student can be enrolled before being placed.',
+    description:
+      'Omit `admissionNo` and one is generated. Class and section are optional — a student can ' +
+      'be enrolled before being placed — and `guardians` links them to their parents in the ' +
+      'same call.',
   })
   @ApiCreatedResponse({ type: StudentResponseDto })
-  @ApiBadRequestResponse({ description: 'Section does not belong to the chosen class' })
+  @ApiBadRequestResponse({
+    description: 'Section does not belong to the chosen class, or two primary contacts',
+  })
   @ApiConflictResponse({ description: 'Admission number already used' })
   create(
     @Body() dto: CreateStudentDto,
@@ -89,7 +115,12 @@ export class StudentsController {
 
   @Patch(':id')
   @RequirePermissions(PERMISSIONS.student.update)
-  @ApiOperation({ summary: 'Edit a student, or move them to another class' })
+  @ApiOperation({
+    summary: 'Edit a student, or move them to another class',
+    description:
+      'Sending `guardians` replaces the whole set — anyone left out is unlinked. Omit the field ' +
+      'to leave the links alone.',
+  })
   @ApiOkResponse({ type: StudentResponseDto })
   @ApiConflictResponse({ description: 'Admission number already used' })
   update(

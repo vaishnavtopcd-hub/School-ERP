@@ -21,6 +21,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ClassesModule } from './modules/classes/classes.module';
 import { MediumsModule } from './modules/mediums/mediums.module';
 import { ParentsModule } from './modules/parents/parents.module';
+import { TimetableModule } from './modules/timetable/timetable.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
+import { ExamsModule } from './modules/exams/exams.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { SchoolsModule } from './modules/schools/schools.module';
 import { StudentsModule } from './modules/students/students.module';
@@ -75,6 +78,9 @@ import { UsersModule } from './modules/users/users.module';
     TeachersModule,
     StudentsModule,
     ParentsModule,
+    TimetableModule,
+    AttendanceModule,
+    ExamsModule,
     // Add them here as they are built, e.g.:
     // StudentsModule, StaffModule, AcademicsModule, AttendanceModule, FeesModule,
   ],

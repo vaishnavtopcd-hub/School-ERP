@@ -79,6 +79,15 @@ export const DEFAULT_SCHOOL_ROLES: RoleTemplate[] = [
       PERMISSIONS.teacher.manage,
       PERMISSIONS.student.manage,
       PERMISSIONS.parent.manage,
+      // Building the week is day-to-day operations, and so is the shape of the
+      // day it sits on.
+      PERMISSIONS.period.manage,
+      PERMISSIONS.timetable.manage,
+      PERMISSIONS.attendance.manage,
+      // Runs the exam calendar end to end, including announcing it.
+      PERMISSIONS.exam.manage,
+      PERMISSIONS.exam.publish,
+      PERMISSIONS.exam.archive,
     ],
   },
   {
@@ -104,6 +113,20 @@ export const DEFAULT_SCHOOL_ROLES: RoleTemplate[] = [
       // see who is enrolled and who to contact, not to maintain the records.
       PERMISSIONS.student.read,
       PERMISSIONS.parent.read,
+      // Same shape as subjects above — places lessons and moves them, but the
+      // period ladder is a structural decision they only read.
+      PERMISSIONS.period.read,
+      PERMISSIONS.timetable.read,
+      PERMISSIONS.timetable.create,
+      PERMISSIONS.timetable.update,
+      // Sees the register across the school; taking it is the class teacher's job.
+      PERMISSIONS.attendance.read,
+      // Academic oversight owns the exam calendar: builds it and announces it,
+      // but cannot delete an exam or close one for good.
+      PERMISSIONS.exam.read,
+      PERMISSIONS.exam.create,
+      PERMISSIONS.exam.update,
+      PERMISSIONS.exam.publish,
     ],
   },
   {
@@ -121,12 +144,28 @@ export const DEFAULT_SCHOOL_ROLES: RoleTemplate[] = [
       // Needs the pupils they teach, and a guardian to contact.
       PERMISSIONS.student.read,
       PERMISSIONS.parent.read,
+      // Their own week, and the classes they take. Read-only: a teacher who
+      // could edit the grid could move a colleague's lesson out of their way.
+      PERMISSIONS.period.read,
+      PERMISSIONS.timetable.read,
+      // Taking the register is the one thing teaching staff write. Delete is
+      // included for the day marked by mistake — the wrong date, the wrong
+      // section — which re-marking cannot undo, since "never taken" is not one
+      // of the four statuses.
+      PERMISSIONS.attendance.read,
+      PERMISSIONS.attendance.create,
+      PERMISSIONS.attendance.update,
+      PERMISSIONS.attendance.delete,
+      // The exam schedule they invigilate and prepare for. Read-only.
+      PERMISSIONS.exam.read,
     ],
   },
   {
     name: 'Parent',
     description: 'Guardian of one or more students.',
-    permissions: [],
+    // Not the school's register — only the rows about their own children, which
+    // is what `attendance:read-own` means and all the service will return.
+    permissions: [PERMISSIONS.attendance.readOwn],
   },
 ];
 

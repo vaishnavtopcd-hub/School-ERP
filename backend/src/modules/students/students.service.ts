@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, StudentStatus } from '@prisma/client';
+import { type GuardianRelationship, Prisma, StudentStatus } from '@prisma/client';
 
 import { type PaginatedResult, buildPaginationMeta } from '@/common/types';
 import { PrismaService } from '@/core/prisma/prisma.service';
@@ -13,6 +13,7 @@ import { PrismaService } from '@/core/prisma/prisma.service';
 import {
   type CreateStudentDto,
   type ListStudentsDto,
+  type StudentGuardianInputDto,
   type StudentResponseDto,
   type UpdateStudentDto,
 } from './dto';
@@ -23,12 +24,28 @@ export interface Actor {
   isSuperAdmin: boolean;
 }
 
+interface GuardianLink {
+  parentId: string;
+  relationship: GuardianRelationship;
+  isPrimaryContact: boolean;
+}
+
+/** Zero-padded width of a generated admission number's sequence. */
+const ADMISSION_NO_WIDTH = 4;
+
+/** How many times a generated number may lose a race before giving up. */
+const ADMISSION_NO_ATTEMPTS = 5;
+
 const studentSelect = {
   id: true,
   admissionNo: true,
   firstName: true,
   lastName: true,
   dateOfBirth: true,
+  gender: true,
+  photoUrl: true,
+  bloodGroup: true,
+  medicalNotes: true,
   status: true,
   schoolId: true,
   createdAt: true,
@@ -60,7 +77,10 @@ export class StudentsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: ListStudentsDto, actor: Actor): Promise<PaginatedResult<StudentResponseDto>> {
+  async findAll(
+    query: ListStudentsDto,
+    actor: Actor,
+  ): Promise<PaginatedResult<StudentResponseDto>> {
     const where: Prisma.StudentWhereInput = {
       ...(actor.isSuperAdmin ? {} : { schoolId: actor.schoolId ?? undefined }),
       ...(query.classId ? { classId: query.classId } : {}),
@@ -100,27 +120,58 @@ export class StudentsService {
     return this.toResponse(await this.getOrThrow(id, actor));
   }
 
+  /**
+   * Enrol a student.
+   *
+   * `admissionNo` is optional: leave it out and the school's next number for
+   * this year is allocated. Guardians can be attached in the same call, so the
+   * office fills one form rather than enrolling and then linking.
+   */
   async create(dto: CreateStudentDto, actor: Actor): Promise<StudentResponseDto> {
     const schoolId = this.requireSchool(actor);
 
-    await this.assertAdmissionNoAvailable(dto.admissionNo, schoolId);
+    if (dto.admissionNo) {
+      await this.assertAdmissionNoAvailable(dto.admissionNo, schoolId);
+    }
+
     const placement = await this.resolvePlacement(dto.classId, dto.sectionId, schoolId);
+    const guardians = await this.resolveGuardians(dto.guardians, schoolId);
 
-    const row = await this.prisma.student.create({
-      data: {
-        admissionNo: dto.admissionNo,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-        status: dto.status ?? StudentStatus.ACTIVE,
-        schoolId,
-        classId: placement.classId,
-        sectionId: placement.sectionId,
-      },
-      select: studentSelect,
+    const row = await this.createWithAdmissionNo(dto.admissionNo, schoolId, (admissionNo) =>
+      this.prisma.$transaction(async (tx) => {
+        const student = await tx.student.create({
+          data: {
+            admissionNo,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+            gender: dto.gender ?? null,
+            photoUrl: dto.photoUrl ?? null,
+            bloodGroup: dto.bloodGroup ?? null,
+            medicalNotes: dto.medicalNotes ?? null,
+            status: dto.status ?? StudentStatus.ACTIVE,
+            schoolId,
+            classId: placement.classId,
+            sectionId: placement.sectionId,
+          },
+          select: { id: true },
+        });
+
+        if (guardians.length > 0) {
+          await tx.parentStudent.createMany({
+            data: guardians.map((guardian) => ({ ...guardian, studentId: student.id })),
+          });
+        }
+
+        return tx.student.findUniqueOrThrow({ where: { id: student.id }, select: studentSelect });
+      }),
+    );
+
+    await this.audit(actor.id, 'student.created', row.id, {
+      admissionNo: row.admissionNo,
+      generated: !dto.admissionNo,
+      guardians: guardians.length,
     });
-
-    await this.audit(actor.id, 'student.created', row.id, { admissionNo: row.admissionNo });
 
     return this.toResponse(row);
   }
@@ -143,19 +194,53 @@ export class StudentsService {
           )
         : null;
 
-    const row = await this.prisma.student.update({
-      where: { id },
-      data: {
-        admissionNo: dto.admissionNo,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        ...(dto.dateOfBirth === undefined
-          ? {}
-          : { dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null }),
-        status: dto.status,
-        ...(placement ? { classId: placement.classId, sectionId: placement.sectionId } : {}),
-      },
-      select: studentSelect,
+    // Resolved before the write so an unknown guardian fails the whole edit
+    // rather than leaving the student half-updated.
+    const guardians =
+      dto.guardians === undefined
+        ? null
+        : await this.resolveGuardians(dto.guardians, existing.schoolId);
+
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.student.update({
+        where: { id },
+        data: {
+          admissionNo: dto.admissionNo,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          ...(dto.dateOfBirth === undefined
+            ? {}
+            : { dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null }),
+          gender: dto.gender,
+          photoUrl: dto.photoUrl,
+          bloodGroup: dto.bloodGroup,
+          medicalNotes: dto.medicalNotes,
+          status: dto.status,
+          ...(placement ? { classId: placement.classId, sectionId: placement.sectionId } : {}),
+        },
+      });
+
+      // Sent means "this is the whole set now": anyone left out is unlinked.
+      // Omitting the field leaves the links untouched, which is what an edit
+      // that never showed them should do.
+      if (guardians) {
+        await tx.parentStudent.deleteMany({
+          where: { studentId: id, parentId: { notIn: guardians.map((row) => row.parentId) } },
+        });
+
+        for (const guardian of guardians) {
+          await tx.parentStudent.upsert({
+            where: { parentId_studentId: { parentId: guardian.parentId, studentId: id } },
+            create: { ...guardian, studentId: id },
+            update: {
+              relationship: guardian.relationship,
+              isPrimaryContact: guardian.isPrimaryContact,
+            },
+          });
+        }
+      }
+
+      return tx.student.findUniqueOrThrow({ where: { id }, select: studentSelect });
     });
 
     await this.audit(actor.id, 'student.updated', id, { changed: Object.keys(dto) });
@@ -175,7 +260,119 @@ export class StudentsService {
     await this.audit(actor.id, 'student.deleted', id, { admissionNo: existing.admissionNo });
   }
 
+  /** What enrolling right now would be given. Advisory — see the DTO. */
+  async nextAdmissionNo(actor: Actor): Promise<string> {
+    return this.generateAdmissionNo(this.requireSchool(actor));
+  }
+
   // -------------------------------------------------------------------------
+
+  /**
+   * Runs the enrolment, allocating a number first when the caller gave none.
+   *
+   * Two enrolments a moment apart read the same highest number, so a generated
+   * one can lose to a unique-constraint violation. The index is the arbiter:
+   * rather than lock the table for a number nobody has asked for yet, this
+   * takes the loss and tries the next one.
+   */
+  private async createWithAdmissionNo<T>(
+    explicit: string | undefined,
+    schoolId: string,
+    run: (admissionNo: string) => Promise<T>,
+  ): Promise<T> {
+    if (explicit) {
+      return run(explicit);
+    }
+
+    for (let attempt = 1; attempt <= ADMISSION_NO_ATTEMPTS; attempt += 1) {
+      try {
+        return await run(await this.generateAdmissionNo(schoolId));
+      } catch (error) {
+        const clash =
+          error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
+        if (!clash || attempt === ADMISSION_NO_ATTEMPTS) {
+          throw error;
+        }
+
+        this.logger.warn(`Admission number taken mid-enrolment; retrying (${attempt})`);
+      }
+    }
+
+    // Unreachable: the loop either returns or throws.
+    throw new ConflictException('Could not allocate an admission number. Try again.');
+  }
+
+  /**
+   * `ADM-<year>-<sequence>`, continuing the school's highest number for the
+   * current year. Numbers entered by hand in another format are ignored rather
+   * than reinterpreted — a school mid-migration keeps both.
+   */
+  private async generateAdmissionNo(schoolId: string): Promise<string> {
+    const prefix = `ADM-${new Date().getFullYear()}-`;
+
+    const existing = await this.prisma.student.findMany({
+      where: { schoolId, admissionNo: { startsWith: prefix } },
+      select: { admissionNo: true },
+    });
+
+    // Compared as numbers, not text: "ADM-2026-10000" sorts *below*
+    // "ADM-2026-9999" lexically, so ordering this in the query would hand back
+    // a number that is already taken.
+    const highest = existing.reduce((max, row) => {
+      const sequence = Number(row.admissionNo.slice(prefix.length));
+      return Number.isInteger(sequence) && sequence > max ? sequence : max;
+    }, 0);
+
+    return `${prefix}${String(highest + 1).padStart(ADMISSION_NO_WIDTH, '0')}`;
+  }
+
+  /**
+   * Checks every guardian is one of this school's, and that the payload obeys
+   * the one-primary-contact rule before any of it is written.
+   */
+  private async resolveGuardians(
+    input: StudentGuardianInputDto[] | undefined,
+    schoolId: string,
+  ): Promise<GuardianLink[]> {
+    if (!input || input.length === 0) {
+      return [];
+    }
+
+    const parentIds = input.map((guardian) => guardian.parentId);
+
+    if (new Set(parentIds).size !== parentIds.length) {
+      throw new BadRequestException('The same guardian is listed twice.');
+    }
+
+    if (input.filter((guardian) => guardian.isPrimaryContact).length > 1) {
+      throw new BadRequestException('Only one guardian can be the primary contact.');
+    }
+
+    const found = await this.prisma.user.findMany({
+      where: {
+        id: { in: parentIds },
+        deletedAt: null,
+        // A guardian is a user with a guardian record — an ordinary account
+        // cannot be linked, the same rule POST /parents/:id/students applies.
+        parentProfile: { isNot: null },
+        schoolId,
+      },
+      select: { id: true },
+    });
+
+    if (found.length !== parentIds.length) {
+      throw new NotFoundException(
+        'One or more of those guardians is not recorded as a guardian in this school.',
+      );
+    }
+
+    return input.map((guardian) => ({
+      parentId: guardian.parentId,
+      relationship: guardian.relationship,
+      isPrimaryContact: guardian.isPrimaryContact ?? false,
+    }));
+  }
 
   private requireSchool(actor: Actor): string {
     if (!actor.schoolId) {
@@ -259,6 +456,10 @@ export class StudentsService {
       // Date-only column: trimmed so it never carries a timezone the school did
       // not mean, matching how academic-year dates are handled.
       dateOfBirth: row.dateOfBirth ? row.dateOfBirth.toISOString().slice(0, 10) : null,
+      gender: row.gender,
+      photoUrl: row.photoUrl,
+      bloodGroup: row.bloodGroup,
+      medicalNotes: row.medicalNotes,
       status: row.status,
       schoolId: row.schoolId,
       classId: row.class?.id ?? null,
